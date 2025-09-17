@@ -15,6 +15,9 @@ class AmazonGraphQLClient:
         # Real Amazon GraphQL endpoint from the provided file
         self.base_url = "https://e5mquma77feepi2bdn4d6h3mpu.appsync-api.us-east-1.amazonaws.com/graphql"
         
+        # Track authorization status
+        self.is_authorized = True
+        
         # Headers from the actual Amazon request
         self.headers = {
             'accept': '*/*',
@@ -315,15 +318,29 @@ class AmazonGraphQLClient:
         return available_shifts
     
     async def create_application_with_logging(self, job_id: str, schedule_id: str, shift_data: Dict[str, Any]) -> bool:
-        """Wrapper for create_application_api with enhanced logging for concurrent execution"""
+        """Wrapper for create_and_update_application with enhanced logging for concurrent execution"""
         try:
-            result = await self.create_application_api(job_id, schedule_id)
-            return result
+            # Check if user is still authorized before attempting application
+            if not self.is_authorized:
+                logger.error(f"❌ SKIPPING APPLICATION: User is unauthorized (401 error detected previously)")
+                logger.error(f"❌ Please update your authentication tokens in server_config.json")
+                logger.error(f"❌ All future application attempts will be skipped until tokens are refreshed")
+                return False
+            
+            # Use the combined create and update method - handles both operations in one call
+            result = await self.create_and_update_application(job_id, schedule_id)
+            
+            if result:
+                logger.info(f"✅ COMPLETE SUCCESS: Created and updated application for {job_id}-{schedule_id}")
+                return True
+            else:
+                logger.error(f"❌ FAILED: Could not create/update application for {job_id}-{schedule_id}")
+                return False
         except Exception as e:
             logger.error(f"❌ Exception in application for {job_id}-{schedule_id}: {e}")
             return False
     
-    async def create_application_api(self, job_id: str, schedule_id: str, candidate_id: str = "18ec5c40-2670-11ee-a91e-69eb9a00e944") -> bool:
+    async def create_application_api(self, job_id: str, schedule_id: str, candidate_id: str = "18ec5c40-2670-11ee-a91e-69eb9a00e944") -> tuple[bool, str]:
         """Create application using direct API call instead of browser automation"""
         
         url = "https://hiring.amazon.ca/application/api/candidate-application/ds/create-application/"
@@ -331,21 +348,21 @@ class AmazonGraphQLClient:
         headers = {
             'accept': 'application/json, text/plain, */*',
             'accept-language': 'en-US,en;q=0.7',
-            'authorization': 'AQICAHidzPmCkg52ERUUfDIMwcDZBDzd+C71CJf6w0t6dq2uqwHN8NcRE0cd1jnBYuQbG2kGAAAEUjCCBE4GCSqGSIb3DQEHBqCCBD8wggQ7AgEAMIIENAYJKoZIhvcNAQcBMB4GCWCGSAFlAwQBLjARBAx/0/baxXANzqN9JGgCARCAggQFO8JTApg9RvUgZskg4rbSaVhzaaCNWMo9chGNjODk8GGT1B5dH0lRRLEvlrvSi+c1BwcJOew4SaD1JBNwrilljkx/YkZnLXPcLcLrirW0XVQGHr25L6Ngwmlx4hEdPKZsHwqgx5J8rfH0b3PaAYLRLFMhAPHIU/lwge7P///N20Pzj5YlIjYUGBhoNrhIHDvorXK97fH93+99vgBMqHtc6LdiE5j4SPR/e6P4zvMVm1qUrmhnpOCuAPJV1ziDKpYs2c2bt8H0NJLGVyLKPTx5omzhQoaJ4/MT+6g4BVJlzzcDDQMngzHqwN3Nw1ObbLW+T/R0H7FiJW0w74ScNYbNm+PSdLYstKVUQfDaxg38ubd0HIXd65PbiKtJHtyEwyczWlRXfx9fpak2DRVa0dXfy7iGKnrR8fFoQYmk0AiN0j1wF3tzBqALHef8tQeArl7gAbltavowgnZeDMiZ+9FAiq6jSW8UW8iYS3LiE7zYr6OrB4k4q9JjHoQvOpgqEzBygLqODURsBa/we1BLQ198d1d7BH3VcfakZJcc7aCpJUEBr9O2CTJguOKUxEXT9C+r6Z9jPimiuYTraw4SGacIormNgwOvwJOHoY3GSZWFTWoPTPz/CLyolXdMUfLFqC2Wxk+ND8f8fPe2tKei+7YZMrPq6E4066dWrcpAepfVokLvYcTj0fnjr5LMu+j4Kh3VK/tl6H8e3eGvNAIYBh6dekMKIH8tefyVLKtlwCVNF86p/Z/LJSgRrutYwvjxto4l/hatG85DwHvnX0WzUy8Y0yNh+bDV3pYyS2sc20s6Wy4fEapfW2tpAJ4gx6o1LgKX9l/B4KN74PPPL7jxKl0qbZj2hTBH6mG4fY6inXwR2ud4CHT6IXnBkH2jVp0p+h14v8jJW63uhFYF9YALL+uFrjkUOJj4HNPvBe/NMtnHPcNPVMp5F/nsFTcRkR+zffrXRlSG0V8lB6WlRRPOs9DYl7WMhFYuXrr5DGAgL0WNpDvwg/GTSLjpW3RnnKWQuaoTf1uqml7jIy9CqgGAC/IJTKdxC6SLMnZ9gNoNGoHHbYPr6PNlS4edRv5GOe02nemtzjPkvulipNTbb9apT7OT/h/Sbtgc520CD0WqXzn44gT//9VcPmTn3vDoxiPDqXM8ZcIJfAmuba2Qz0JEfii12Cp8usGIZYpqxU7yOqgxNLFCXqui2U9bY09EpA9N96vHUBnj4MicIJ7ZPL9UMEYS643o9VtPENeKwFlBARNcPeWAVfl0yuS+tXPxT0BCwAZ9km5ZIagW2nrBfV74DV1qOMFdchriT8mNDOE4E8aFQOjP1RDxbwz45UEonW5pdCZgkdzuTW8Zh7aNqX2NTF0Sz+5Wtx3r',
+            'authorization': 'AQICAHidzPmCkg52ERUUfDIMwcDZBDzd+C71CJf6w0t6dq2uqwEnnBNTGFjKkOySsD5VoxLgAAAEUjCCBE4GCSqGSIb3DQEHBqCCBD8wggQ7AgEAMIIENAYJKoZIhvcNAQcBMB4GCWCGSAFlAwQBLjARBAzqgGXaafjLhzr/SBwCARCAggQFYaVWoUBm7rpYn/4Ff0Ek7VTjkn3mMHkewOttuE9iZGqI2iyx4VZHWHPy6uOOn/SOmB9rdEnUb09aeGJY0UkySdVnsxIFsbxBeUCC9+9PmawMRJ6+WVpefLiCGT+6J2+QchBrhdn7oY9Kyb1oQ+4PYNWH+tB6p20mCs+f31snu+eF9K1Tayg3CWSM9Iz0a8Gsck7B7EeWaqJlEjQWgmlnE8W/BRGj8FTK6jjUG4ta7FgMKzn42foLaTA9Qi5ikLYuCmEKX4jdlSVJh2jgr/s6TL6UTDGjso8EqsZtyaYfYcNLUbuYBVuQ6LBTVOMC5W1sMDAEYmh3f6Um+86yDaRo0zPyBWBCGoyyKgX2TEqYILeNHY7yqw4/szWHPNCAtws0y2Y2iG54fIpbJIYgV+9qyeQQoh7mxgcef2GkIr0TXxN3fYD2V8JcxK+8FhgopzG4d1qVG9Cnj2GOcwr09+sLNG8BTPgB/ym1+3iYk/Q/oqmIcTF0bw9SkpB12DdqmaxtzRQfuDXg64C/oSoURjD9vv3SSElSKYZy6YaeaI6N+9tqlBgMV8/JSFqbTfi/vH9ANsMBy/YAk8H7QwZVxr3WRMpzLObG3QMQVLW/OTGYNz/TZ8J2g4j63B22MSRS31lh6RieVGqcLrug/jMH8oOYXRVJiPh2eLNuGmQYQ+uNGo1GUYiP7YBTrwQWPsVyL1bjZzML3/jyycQceIZtBfRaqPlh0rg2NoJJnPb+5YMDGxp2lGzCZf/1zHAfDRikU4K0BcXYMIEBroOhLQkRRbtxhc8fgILLWtSgR63s2CSuhhflcIGKYO+1gDolYv2TyFlYJx/rwNWO5I//+IqkGrReP1bp6S3n2So8LUkTLLTNRnq8O845ykVYYyxQP43fpoVVZ0tM8ts68tjkg/hMGu47UwJ66N3wGLV4F3PIJdn0vNkL57l1L+5WdjxF8AvEnwn9LwARn8392M6G2nWlSoECGLDkCmU2NTNn3VBl/TNZJ68U/K9SA9YU+z/gYMBH11YAx4ttKXB3CeSbwftYyTNKljEy/TvHUiTBHcIawMAEn52jXIdvkNEWKKUzq4+kM8pLwxuE9I77wx9yPxvnssbppd4NHc/8QuizzO1+FF85E+64LJU7rIUJOnJusBuvfUYOBNpRaj/5MaF471aPGCa9Juu3VDc7p7EPJ5zia4XShFRcqcnsc9Dty3noZ2iS5a5Tt5tRxAAsieJLdxEPT6l27rG9592l/zMDKhF2mZVL915zg1ZVD2XQZLtTkc6lf2Tp8ZUtRzH49iUCl7cEZzS6XSDsLpEJJK9z97VE94jguwb5hm86UIbh6/rZ0irLwsi2cNk+vsejNih6R96wpr6iglKfRUWu',
             'bb-ui-version': 'bb-ui-v2',
             'content-type': 'application/json;charset=UTF-8',
             'dnt': '1',
-            'origin': 'https://hiring.amazon.com',
+            'origin': 'https://hiring.amazon.ca',
             'priority': 'u=1, i',
-            'referer': 'https://hiring.amazon.com/application/us/?CS=true&jobId=JOB-US-0000010894&jobTitle=Amazon%20Fulfillment%20Center%20Warehouse%20Associate&locale=en-US&scheduleId=SCH-US-0000618577&ssoEnabled=1',
-            'sec-ch-ua': '"Not;A=Brand";v="99", "Brave";v="139", "Chromium";v="139"',
+            'referer': 'https://hiring.amazon.ca/application/ca/?CS=true&jobId={jobId}&jobTitle=Amazon%20Fulfillment%20Center%20Warehouse%20Associate&locale=en-US&scheduleId={}&ssoEnabled=1',
+            'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Brave";v="140"',
             'sec-ch-ua-mobile': '?1',
             'sec-ch-ua-platform': '"Android"',
             'sec-fetch-dest': 'empty',
             'sec-fetch-mode': 'cors',
             'sec-fetch-site': 'same-origin',
             'sec-gpc': '1',
-            'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Mobile Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
         }
 
         cookies = {
@@ -374,16 +391,16 @@ class AmazonGraphQLClient:
             'aws-signer-token_us-east-1': 'eyJrZXlWZXJzaW9uIjoicmd3NEdtRWYuY1BLZGxiUVVfSllPNC50bTM2T3VvUkUiLCJ2YWx1ZSI6ImswRSszeUkxU2t2cEdBMkRkU1BaR1o5ZVVZMUsyVjRIc0ptTThqekRLNVk9IiwidmVyc2lvbiI6MX0=',
             'regStatus': 'pre-register',
             'AMCV_7742037254C95E840A4C98A6%40AdobeOrg': '1585540135%7CMCIDTS%7C20341%7CMCMID%7C24398453481646198108820397753625393383%7CMCAID%7CNONE%7CMCOPTOUT-1757389599s%7CNONE%7CvVersion%7C4.4.0',
-            'adobe-session-id': '08c1ba02-0cc6-4163-869c-b61f4b1796bc',
+            'adobe-session-id': 'ee4f6f45-ecba-41a0-ab84-edcc5e207afc',
             'hvh_cs_wlbsid': '200-3968307-5109664',
             'hvh-locale': 'en-US',
             'hvh-default-locale': 'en-US',
             'hvh-country-code': 'CA',
             'hvh-stage': 'prod',
-            'aws-waf-token': '381d6aa8-c929-4128-a153-3bf130a5acc5:CAoAe9UWoKQIAAAA:A1pn2weUWwo9SmAeJb4KG0EgDLPeg7L8vCXcFxpz6gFG99/1kAcWPd9jbfifVJWPP/V8El4rfin+mpS5qMIYmQ7kSIAZUGTJXCZN3newML6OtPFyToUfJnPtGxpdB1gYvaMaINjoF7Z8QFk85TgxQYVDoZb+6QVHy78xI2ET30mPfO7Kx1qL4dmA7/IRtOJqNOdjd7dpQK6muqIH',
+            'aws-waf-token': '3ae363b0-6d83-418d-9809-bb9dbf01ca7d:CAoAbt4QDTEUAAAA:eOAl5KZtDdcmjw677cOnlv0qODKW3QA4+5pdzxp0LVqSkCp1jiLmDJIFacBqGlhSz+FG26woqouZe0ro/ag180wPX0MXePF8fWriWvZA9QRvaoScouA+tNC3sjGyI6MiuOIHSaOb7cbq7/8/8/5LfN8GZCVbZiU5Fws6CHUGXMXs+voDe2tNS2Ht6ufopIHtAkY9rWnImm2GLKE=',
             'hvhcid': '20477730-8d2b-11f0-a016-2b5a90896789',
             'AMCV_CCBC879D5572070E7F000101%40AdobeOrg': '179643557%7CMCIDTS%7C20340%7CMCMID%7C50577722946221945950058095730794849009%7CMCAID%7CNONE%7CMCOPTOUT-1757394881s%7CNONE%7CvVersion%7C5.5.0',
-            'JSESSIONID': '27E9041A8CC63D9946CAC7DB18D3705A',
+            'JSESSIONID': '5F08D1E94B5F19BCF39C642256E1A01E',
         }
         
         data = {
@@ -402,29 +419,206 @@ class AmazonGraphQLClient:
                 async with session.post(url, headers=headers, cookies=cookies, json=data) as response:
                     if response.status == 200:
                         result = await response.json()
-                        logger.info(f"⚡ API SUCCESS: {result}")
-                        return True
+                        # Extract application ID from response
+                        application_id = ""
+                        if 'data' in result and 'applicationId' in result['data']:
+                            application_id = result['data']['applicationId']
+                            logger.info(f"✅ API SUCCESS: Application created with ID {application_id}")
+                            logger.info(f"📋 Job: {job_id} | Schedule: {schedule_id} | State: {result['data'].get('currentState', 'Unknown')}")
+                        else:
+                            logger.info(f"⚡ API SUCCESS: {result}")
+                        return True, application_id
                     else:
                         error_text = await response.text()
                         logger.error(f"❌ API ERROR {response.status}: {error_text}")
-                        return False
+                        return False, ""
                         
         except ImportError:
             # Fallback to requests (synchronous)
             try:
                 response = requests.post(url, headers=headers, cookies=cookies, json=data)
                 if response.status_code == 200:
-                    logger.info(f"⚡ API SUCCESS: {response.json()}")
-                    return True
+                    result = response.json()
+                    # Extract application ID from response
+                    application_id = ""
+                    if 'data' in result and 'applicationId' in result['data']:
+                        application_id = result['data']['applicationId']
+                        logger.info(f"✅ API SUCCESS: Application created with ID {application_id}")
+                        logger.info(f"📋 Job: {job_id} | Schedule: {schedule_id} | State: {result['data'].get('currentState', 'Unknown')}")
+                    else:
+                        logger.info(f"⚡ API SUCCESS: {result}")
+                    return True, application_id
                 else:
                     logger.error(f"❌ API ERROR {response.status_code}: {response.text}")
-                    return False
+                    return False, ""
             except Exception as e:
                 logger.error(f"❌ API REQUEST FAILED: {e}")
-                return False
+                return False, ""
         except Exception as e:
             logger.error(f"❌ API REQUEST FAILED: {e}")
+            return False, ""
+
+    
+    async def create_and_update_application(self, job_id: str, schedule_id: str, candidate_id: str = "fc5c1d80-f096-11ee-b747-298d2c2cbcfb", has_referral: str = "no") -> bool:
+        """Create application and then update it with job referral information"""
+        
+        # First, create the application
+        url_create = "https://hiring.amazon.ca/application/api/candidate-application/ds/create-application/"
+        
+        # === AMAZON HEADERS/COOKIES UPDATED 2025-09-16 ===
+        headers = {
+            'accept': 'application/json, text/plain, */*',
+            'accept-language': 'en-US,en;q=0.5',
+            'authorization': 'AQICAHidzPmCkg52ERUUfDIMwcDZBDzd+C71CJf6w0t6dq2uqwGbOW9b2fhZdcKnrqV/Y6QeAAAEUjCCBE4GCSqGSIb3DQEHBqCCBD8wggQ7AgEAMIIENAYJKoZIhvcNAQcBMB4GCWCGSAFlAwQBLjARBAwCNaKv/DPcL1iydjoCARCAggQF4L/IX+c5GVby78m+IAZoBsFrEO3w4D5Bm9cIU0yqqctTXyqxhbKtZWDHfnBsArUuJHnSJfpUwqOFYsL8KQTP77QuLBYkqPy5skgCSuJu9YX1zbN99Yee0UVQWGcDoYnC4gcOj7bk4Ig+XD6yvKrk6sO/nCq5576co0/LB98Bn8rPgj3S/uxVm0sfDdHe4eP/eutLUqR4QRcFu2seMLkUMgMxQpFa43lPJczzR9rbOlXtQ30oPpb36kLRX6REvz8DSpXb70GrXAOTZUpIRCy5ZNxJypRIxNGiv1/XrbqsHElN4tm5crXc+8hc6LvvmfBuaDOTF0AGddPLVV08Lw1uC+815fsqBCN5+cS8+5CDJvxpoUpUGtmuRJR89ZvdJr4RlD4aqHbf7yaHZUMHGaFjpc+UP+fjHOl+PUhwjFIrJ6YipvcdwMYwyMGAvmf/ZaR9iEqlnyRUxZMdlpRxJf86G4K1FA2QxplR09iS7E7oDes791fwYqMf0gNSJd6X2oQESW++hSUF2g+0xujoytEVoIFZz18/IzAB6o1LkxhyXWk0BDcfGRNXi8+ZuUyBkrOZ9EOWue0Liy29B8iGbHEXI11oBUX1JZAG0LsNeXmLE9gysWxyPmEHwfl61nT/+paOvPPSiSMWYi3xyWop5TDV/yf4bBD1ZUNuUi8KUG+ImJOXi6yEr0lllo80/ryluQgx2nyFaPjbSnbPO4fK0KkKYPoV3XpPKbtbXjFHr2mqTWF/MWnXdWI5LD4A7ld56PrweA4ORkBgCA3oXqKZdtfB/JrgZSt0vY6xKmhaXk8pCi4QfIO6DS3XsXz7aMzZ5ztWpN3/PWfitvBdZAlvZh9VUn5toXuJck41uyyf9ojF5IkLKTuQZt/aK3A/F6AGml7ZIClvSKtSDzaUhvtznWAR09GQspJ7YiyUoSqw5FEROaioONLP4Kz1KtXNWiiOO55VWkmGD2yCkVLNbABIabe0OetQLYdYnLhFpMsoh/BvSqJZDdDFkn4ZmVbZ20tAb5u3LSv7NTX3tAjGggamkU9XYwQzRCPtaWZFQNFR3cz3UJzrr3SEkVr+/WYvksyHRiynyodkWtHFBBlw1d9l422kbWHl0V9Z1kubX2sIMYS29/jJKygAdA+AubXp9jwzKWeTl+9OSPQ4SAcgaExJ2bNwLii1UCmNnunnCgtxIgrcF3uvaJ/pkjYaZDIuC1F+dS8qrLcC9EDbNuNZhM00E0GuM2+PnzVET+dvgfgWUoj51aUPYjkEoKRI6M2gr3tVeYZdzy3RlEiKvX1ZqED/J896f+EzEj92xixP1ROzsSDwYLO/30Kif6zHDkmZJgg4tInNbPppt82Pvv5K+elE/PtepnnHBgp4',
+            'bb-ui-version': 'bb-ui-v2',
+            'content-type': 'application/json;charset=UTF-8',
+            'dnt': '1',
+            'origin': 'https://hiring.amazon.ca',
+            'priority': 'u=1, i',
+            'referer': f'https://hiring.amazon.ca/application/ca/?scheduleId={schedule_id}&jobId={job_id}?CS=true?locale=en_US?ssoEnabled=1',
+            'sec-ch-ua': '"Chromium";v="140", "Not=A?Brand";v="24", "Brave";v="140"',
+            'sec-ch-ua-mobile': '?1',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-origin',
+            'sec-gpc': '1',
+            'user-agent': 'Mozilla/5.0 (Linux; Android 6.0; Nexus 5 Build/MRA58N) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36',
+        }
+
+        cookies = {
+            'session-id': '146-4179320-3649416',
+            'session-id-time': '2082787201l',
+            'i18n-prefs': 'CAD',
+            'lc-main': 'en_US',
+            'sp-cdn': '"L5Z9:CA"',
+            'ubid-main': '131-8192175-1085827',
+            'aws-ubid-main': '561-7327142-7167806',
+            'adobe-session-id': '08c1ba02-0cc6-4163-869c-b61f4b1796bc',
+            'session-token': 'J1bwjI595KrRW1LW1ZmUo1buMHRT4TV7RtpQr5K1+NzGZVRL4Y2Y1h4aQzGL4wc9B4Nx1/PdM29wRUgdmSISUpY2KAgIf+LtuSUurMXE2nHowZ4cereynoDM3+5v9RTQdPT80QQC6GtYPGGLRaprpkkZRr6uV2vnDhJtG/p5LzOY9Hnl524SQfoS2wgbaHpTBku2qZSFwN+nm+1F7YHi8IWl2OEFCm2hL5EnG534iQGhwGVjP0ZXkoFKuqloeDbTRD9GS8obCEa1XmOMK9O8attTSirnEIqHHS8Gx896oeODagD8kYd6kVTNGfB+fWkvPVm44kdFpVOl2yr9jo/P4igD5owQF7Hc',
+            'aws-userInfo-signed': 'eyJ0eXAiOiJKV1MiLCJrZXlSZWdpb24iOiJ1cy1lYXN0LTEiLCJhbGciOiJFUzM4NCIsImtpZCI6IjQ1YzkxMTJjLTEwZDMtNDk5NS04NzI2LWQ5ZWQ3ODA0MjYzNSJ9.eyJzdWIiOiIiLCJzaWduaW5UeXBlIjoiUFVCTElDIiwiaXNzIjoiaHR0cHM6XC9cL3NpZ25pbi5hd3MuYW1hem9uLmNvbVwvc2lnbmluIiwia2V5YmFzZSI6IkI0dUxmRmxySDNrTkdcLzVpMGk1d2FUcENTUE0rUmxBVVp6QStrT0U1dnY4PSIsImFybiI6ImFybjphd3M6aWFtOjo1MzMyNjczMjQ3MTU6cm9vdCIsInVzZXJuYW1lIjoiVml2ZWsifQ.RecZMuDogj3MIRmiLI-zkW5W09fl74E1rlgiPtCA7luDqGxwKiJYq7SKg8KhKOu3XD6rBAvmFXv3PCSeQdd3m2wtHYy1ymUE6xGxoSeii7eJwNR1_r9I8BQJQVD_a54N',
+            'aws-userInfo': '%7B%22arn%22%3A%22arn%3Aaws%3Aiam%3A%3A533267324715%3Aroot%22%2C%22alias%22%3A%22%22%2C%22username%22%3A%22Vivek%22%2C%22keybase%22%3A%22B4uLfFlrH3kNG%2F5i0i5waTpCSPM%2BRlAUZzA%2BkOE5vv8%5Cu003d%22%2C%22issuer%22%3A%22https%3A%2F%2Fsignin.aws.amazon.com%2Fsignin%22%2C%22signinType%22%3A%22PUBLIC%22%7D',
+            'regStatus': 'registered',
+            'noflush_awsccs_sid': '61c252ff29837075f54c148509969e464ea81e0f92b076e495bf59cf2b11334c',
+            'awsc-color-theme': 'light',
+            'AMCVS_CCBC879D5572070E7F000101%40AdobeOrg': '1',
+            'hvh_cs_wlbsid': '267-9236493-7530657',
+            'hvh-locale': 'en-US',
+            'hvh-default-locale': 'en-US',
+            'hvh-country-code': 'US',
+            'hvh-stage': 'prod',
+            'JSESSIONID': 'CE8EC27DE802B18E685CCCD6FC22475F',
+            'hvhcid': 'ad8d1cb0-936d-11f0-a162-ab4f8dedbe23',
+            'AMCV_CCBC879D5572070E7F000101%40AdobeOrg': '179643557%7CMCIDTS%7C20348%7CMCMID%7C50577722946221945950058095730794849009%7CMCAID%7CNONE%7CMCOPTOUT-1758083172s%7CNONE%7CvVersion%7C5.5.0',
+            'aws-waf-token': '3ae363b0-6d83-418d-9809-bb9dbf01ca7d:CAoAr6AQDlQGAQAA:HORsM04o7hj8H0Kbyc+6ClHj4tTM89LVR25XhOV96OWxnNQgSjg7UiDCZFwzA02y1hrQp3s1iYZpycal6w9aQJxBdScxbr4C2S9I8fk+MXFVmowzMeuT9dQJR1gXBh4S6w+KKu+YRLF3DHHgMtB6WjFWo5QyZKddAGf6qS7Zx5DdfdsaJJ0iqrhkbojpl9aP31Ngyfcr50lRFB+f',
+        }
+        
+        create_data = {
+            "jobId": job_id,
+            "dspEnabled": True,
+            "scheduleId": schedule_id,
+            "candidateId": candidate_id,
+            "activeApplicationCheckEnabled": True
+        }
+        
+        try:
+            import aiohttp
+            
+            async with aiohttp.ClientSession() as session:
+                # Step 1: Create the application
+                async with session.post(url_create, headers=headers, cookies=cookies, json=create_data) as response:
+                    if response.status == 200:
+                        create_result = await response.json()
+                        logger.info(f"⚡ CREATE SUCCESS: {create_result}")
+                        
+                        # Extract application ID from response - it's nested under 'data'
+                        application_id = ""
+                        if isinstance(create_result, dict) and 'data' in create_result:
+                            data = create_result['data']
+                            if isinstance(data, dict) and 'applicationId' in data:
+                                application_id = data['applicationId']
+                                logger.info(f"🎯 Extracted application ID: {application_id}")
+                                logger.info(f"📋 Application state: {data.get('currentState', 'Unknown')}")
+                        
+                        if application_id:
+                            # Step 2a: First update - Job confirmation
+                            url_update = "https://hiring.amazon.ca/application/api/candidate-application/update-application"
+                            
+                            # Update headers for PUT request
+                            update_headers = headers.copy()
+                            update_headers['accept-language'] = 'en-US,en;q=0.7'
+                            update_headers['referer'] = f'https://hiring.amazon.ca/application/ca/?CS=true&jobId={job_id}&locale=en-US&scheduleId={schedule_id}&ssoEnabled=1'
+                            
+                            # First update: job-confirm
+                            job_confirm_data = {
+                                "applicationId": application_id,
+                                "payload": {
+                                    "jobId": job_id,
+                                    "scheduleId": schedule_id
+                                },
+                                "type": "job-confirm",
+                                "dspEnabled": True
+                            }
+                            
+                            async with session.put(url_update, headers=update_headers, cookies=cookies, json=job_confirm_data) as job_confirm_response:
+                                if job_confirm_response.status == 200:
+                                    job_confirm_result = await job_confirm_response.json()
+                                    logger.info(f"✅ JOB CONFIRM SUCCESS: {job_confirm_result}")
+                                else:
+                                    error_text = await job_confirm_response.text()
+                                    logger.error(f"❌ JOB CONFIRM ERROR {job_confirm_response.status}: {error_text}")
+                                    return False
+                            
+                            # Step 2b: Second update - General questions (referral)
+                            referral_data = {
+                                "applicationId": application_id,
+                                "payload": {
+                                    "jobReferral": {
+                                        "hasReferral": has_referral
+                                    }
+                                },
+                                "type": "general-questions",
+                                "dspEnabled": True
+                            }
+                            
+                            async with session.put(url_update, headers=update_headers, cookies=cookies, json=referral_data) as referral_response:
+                                if referral_response.status == 200:
+                                    referral_result = await referral_response.json()
+                                    logger.info(f"✅ REFERRAL SUCCESS: {referral_result}")
+                                    logger.info(f"✅ COMPLETE SUCCESS: Created and fully updated application {application_id} for {job_id}-{schedule_id}")
+                                    return True
+                                else:
+                                    error_text = await referral_response.text()
+                                    logger.error(f"❌ REFERRAL ERROR {referral_response.status}: {error_text}")
+                                    logger.warning(f"⚠️ PARTIAL SUCCESS: Created and confirmed job but failed referral update for {job_id}-{schedule_id}")
+                                    return True  # Still return True since create and job-confirm succeeded
+                        else:
+                            logger.warning(f"⚠️ No application ID returned from create response")
+                            return True  # Still return True since create succeeded
+                    else:
+                        error_text = await response.text()
+                        logger.error(f"❌ CREATE ERROR {response.status}: {error_text}")
+                        
+                        # Check for 401 unauthorized error
+                        if response.status == 401:
+                            self.is_authorized = False
+                            logger.error(f"❌ ❌ AUTHORIZATION FAILED: User is unauthorized!")
+                            logger.error(f"❌ ❌ Please update your authentication tokens in server_config.json")
+                            logger.error(f"❌ ❌ All future application attempts will be skipped until tokens are refreshed")
+                        
+                        return False
+                        
+        except ImportError:
+            logger.error("❌ aiohttp not available, falling back to synchronous requests")
             return False
+        except Exception as e:
+            logger.error(f"❌ REQUEST FAILED: {e}")
+            return False
+    
+    def reset_authorization_status(self):
+        """Reset authorization status - call this after updating tokens"""
+        self.is_authorized = True
+        logger.info("✅ Authorization status reset - application attempts will resume")
     
     async def ultra_fast_apply_all_available(self, lat: float = 43.7952, lng: float = -79.267, distance: int = 100, max_concurrent: int = 50) -> Dict[str, Any]:
         """Ultra-fast method to apply to ALL available jobs simultaneously with concurrency limit"""
