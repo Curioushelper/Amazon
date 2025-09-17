@@ -505,7 +505,7 @@ class AmazonGraphQLClient:
             'hvh_cs_wlbsid': '267-9236493-7530657',
             'hvh-locale': 'en-US',
             'hvh-default-locale': 'en-US',
-            'hvh-country-code': 'US',
+            'hvh-country-code': 'CA',
             'hvh-stage': 'prod',
             'JSESSIONID': 'CE8EC27DE802B18E685CCCD6FC22475F',
             'hvhcid': 'ad8d1cb0-936d-11f0-a162-ab4f8dedbe23',
